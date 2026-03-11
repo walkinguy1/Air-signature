@@ -1,0 +1,25 @@
+# GestureGuard Requirements
+# Gesture-Authenticated Environment Manager
+
+# Core Dependencies
+opencv-python>=4.8.0        # Computer vision, camera capture
+mediapipe>=0.10.9           # Hand detection and landmark tracking
+numpy>=1.24.0               # Numerical operations
+
+# DTW Matching
+dtaidistance>=2.3.1         # Dynamic Time Warping algorithm
+
+# Security
+cryptography>=41.0.0        # AES-256 encryption for Platinum+
+
+# Action Execution
+pyautogui>=0.9.54           # Keyboard/mouse automation
+
+# GUI
+Pillow>=10.0.0              # Image processing for GUI
+
+# Optional: For Windows-specific features
+pywin32>=306                # Windows service management
+
+# Utilities
+python-dotenv>=1.0.0        # Environment variable management
