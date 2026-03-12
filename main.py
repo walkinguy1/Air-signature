@@ -16,6 +16,7 @@ import os
 import argparse
 import time
 import cv2
+import numpy as np
 from pathlib import Path
 
 # Add project to path
@@ -268,25 +269,67 @@ def test_auth(args):
         # Wait for key press
         cv2.waitKey(0)
         
-        # Capture gesture
-        gesture = None
-        start_time = time.time()
+        print("\nGet ready to perform your gesture...")
+        print("3...")
+        time.sleep(1)
+        print("2...")
+        time.sleep(1)
+        print("1...")
+        time.sleep(1)
+        print("GO! Perform your gesture NOW!")
         
-        print("Capturing...")
+        # Capture gesture - accumulate frames over time
+        gesture_frames = []
+        start_time = time.time()
+        last_print = 0
         
         while time.time() - start_time < 3.0:
-            g = camera.get_current_gesture()
-            if g is not None:
-                gesture = g
-            time.sleep(0.033)
+            frame = camera.get_frame()
+            if frame is not None:
+                hands_data = camera.detect_hands(frame)
+                
+                if hands_data:
+                    # Add landmarks from first hand
+                    gesture_frames.append(hands_data[0].landmarks)
+                    
+                    # Show progress every 0.5 seconds
+                    elapsed = time.time() - start_time
+                    if elapsed - last_print > 0.5:
+                        print(f"  ✓ Capturing... {len(gesture_frames)} points ({elapsed:.1f}s)")
+                        last_print = elapsed
+                else:
+                    # Warn if no hand detected
+                    elapsed = time.time() - start_time
+                    if elapsed > 0.5 and len(gesture_frames) == 0:
+                        print("  ⚠ No hand detected! Show your hand to the camera!")
+            
+            # Show the frame so you can see yourself
+            if frame is not None:
+                cv2.imshow("GestureGuard - Perform your gesture", frame)
+                cv2.waitKey(1)
+            
+            time.sleep(0.033)  # ~30 FPS
         
-        if gesture is None:
-            print("No gesture captured")
+        cv2.destroyAllWindows()
+        
+        print(f"\nCapture complete: {len(gesture_frames)} frames")
+        
+        if len(gesture_frames) < 15:  # Reduced threshold
+            print(f"❌ Gesture too short: need at least 15 frames, got {len(gesture_frames)}")
+            print("\nTips:")
+            print("  - Make sure your hand is clearly visible")
+            print("  - Start performing gesture immediately after countdown")
+            print("  - Keep hand in frame for full 3 seconds")
             return 1
+        
+        # Flatten all frames into single gesture array
+        gesture = np.vstack(gesture_frames)
         
         # Normalize
         from core.detector import normalize_signature
         normalized = normalize_signature(gesture)
+        
+        print(f"Normalized gesture: {len(normalized)} points")
         
         # Authenticate
         profile, status = auth.authenticate(pin, normalized)

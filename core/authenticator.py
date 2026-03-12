@@ -47,11 +47,13 @@ class Profile:
         actions: Optional[List[Dict[str, Any]]] = None,
         created_at: Optional[str] = None,
         last_used: Optional[str] = None,
-        dtw_threshold: float = DEFAULT_DTW_THRESHOLD
+        dtw_threshold: float = DEFAULT_DTW_THRESHOLD,
+        salt: Optional[str] = None
     ):
         self.profile_id = profile_id or str(uuid.uuid4())
         self.name = name
         self.pin_hash = pin_hash
+        self.salt = salt  # Salt for PIN hashing
         self.signature_samples = signature_samples
         self.signature_template = signature_template
         self.actions = actions or []
@@ -99,6 +101,7 @@ class Profile:
             "profile_id": self.profile_id,
             "profile_name": self.name,
             "pin_hash": self.pin_hash,
+            "salt": self.salt,
             "signature_samples": self.signature_samples,
             "signature_template": self.signature_template,
             "actions": self.actions,
@@ -119,7 +122,8 @@ class Profile:
             actions=data.get("actions", []),
             created_at=data.get("created_at"),
             last_used=data.get("last_used"),
-            dtw_threshold=data.get("dtw_threshold", DEFAULT_DTW_THRESHOLD)
+            dtw_threshold=data.get("dtw_threshold", DEFAULT_DTW_THRESHOLD),
+            salt=data.get("salt")
         )
     
     def save(self, profiles_dir: Path = PROFILES_DIR) -> Path:
@@ -216,8 +220,9 @@ class Authenticator:
         Returns:
             True if PIN matches
         """
-        # Simple hash without salt for Gold (add salt for Platinum)
-        input_hash = self.hash_pin(pin)
+        # Use profile's salt if available, otherwise empty string for backwards compatibility
+        salt = profile.salt if profile.salt else ""
+        input_hash = self.hash_pin(pin, salt)
         return input_hash == profile.pin_hash
     
     def compute_dtw_distance(self, gesture1: np.ndarray, gesture2: np.ndarray) -> float:
@@ -392,12 +397,18 @@ class Authenticator:
         Returns:
             Created profile
         """
-        pin_hash = self.hash_pin(pin)
+        # Generate random salt for PIN hashing
+        import secrets
+        salt = secrets.token_hex(16)  # 32-character hex string
+        
+        # Hash PIN with salt
+        pin_hash = self.hash_pin(pin, salt)
         
         profile = Profile(
             profile_id=str(uuid.uuid4()),
             name=name,
             pin_hash=pin_hash,
+            salt=salt,
             signature_samples=signature_samples,
             actions=actions,
             dtw_threshold=dtw_threshold

@@ -47,10 +47,36 @@ class CameraMonitor:
         self.camera_index = camera_index
         self.resolution = resolution
         
-        # MediaPipe Hands initialization
-        self.mp_hands = mp.solutions.hands
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.mp_drawing_styles = mp.solutions.drawing_styles
+        # MediaPipe Hands initialization (compatible with all versions)
+        try:
+            # Try import via mp.solutions (older API)
+            self.mp_hands = mp.solutions.hands
+            self.mp_drawing = mp.solutions.drawing_utils
+            self.mp_drawing_styles = mp.solutions.drawing_styles
+            print("Using MediaPipe mp.solutions API")
+            
+        except AttributeError:
+            # Newer versions use tasks API
+            try:
+                from mediapipe.tasks import python
+                from mediapipe.tasks.python import vision
+                
+                # For hand landmark detection with newer API
+                print("MediaPipe solutions not available. Using tasks API...")
+                
+                # Note: tasks API has different structure, need to adapt
+                # For now, raise error and suggest correct version
+                raise ImportError(
+                    "Your MediaPipe version uses a different API.\n"
+                    "Please install compatible version:\n"
+                    "pip install mediapipe==0.10.14"
+                )
+                
+            except ImportError:
+                raise ImportError(
+                    "MediaPipe not properly installed.\n"
+                    "Please run: pip install mediapipe==0.10.14"
+                )
         
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -238,17 +264,45 @@ class CameraMonitor:
         if frame is None:
             return None, [], False
         
-        # Detect hands
-        hands_data = self.detect_hands(frame)
+        # Convert to RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame.flags.writeable = False
+        
+        # Process frame with MediaPipe
+        results = self.hands.process(rgb_frame)
+        
+        hands_data = []
+        timestamp = time.time()
+        
+        if results.multi_hand_landmarks and results.multi_handedness:
+            for idx, (landmarks, handedness) in enumerate(
+                zip(results.multi_hand_landmarks, results.multi_handedness)
+            ):
+                # Extract landmark coordinates
+                landmarks_array = np.array([[lm.x, lm.y, lm.z] for lm in landmarks.landmark])
+                
+                hand_data = HandData(
+                    landmarks=landmarks_array,
+                    handedness=handedness.classification[0].label,
+                    timestamp=timestamp,
+                    frame_id=self.frame_count
+                )
+                hands_data.append(hand_data)
+                
+                # Draw skeleton if requested
+                if draw_skeleton:
+                    self.mp_drawing.draw_landmarks(
+                        frame,
+                        landmarks,
+                        self.mp_hands.HAND_CONNECTIONS,
+                        self.mp_drawing_styles.get_default_hand_landmarks_style(),
+                        self.mp_drawing_styles.get_default_hand_connections_style()
+                    )
         
         # Check trigger condition
         trigger_activated = False
         if len(hands_data) >= TRIGGER_HAND_COUNT:
             trigger_activated = self.check_trigger_condition(len(hands_data))
-        
-        # Draw skeleton if requested
-        if draw_skeleton and hands_data:
-            frame = self.get_hand_skeleton(frame, hands_data)
         
         # Add UI overlay
         frame = self._add_ui_overlay(frame, hands_data)
@@ -352,3 +406,4 @@ if __name__ == "__main__":
                 
         monitor.stop()
         cv2.destroyAllWindows()
+

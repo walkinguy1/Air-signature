@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project Specific
+profiles/*.json
+!profiles/.gitkeep
+*.log
+error_log.txt
+
+# MediaPipe/TensorFlow cache
+*.tflite
+*.pbtxt
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/

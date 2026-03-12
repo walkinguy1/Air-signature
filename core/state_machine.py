@@ -203,47 +203,136 @@ class GestureStateMachine:
             self._auth_failed("PIN entry timeout")
             return
         
-        # Get PIN from user via callback
-        if self.on_pin_required:
-            pin = self.on_pin_required()
-            if pin:
-                self.current_pin = pin
-                self._set_state(SystemState.GESTURE_CAPTURE)
-                self.auth_start_time = time.time()
+        # Only show overlay once when entering this state
+        if not hasattr(self, '_pin_overlay_shown'):
+            self._pin_overlay_shown = True
+            
+            # Import here to avoid tkinter import errors in headless environments
+            try:
+                from gui.pin_overlay import PINEntryOverlay
                 
-                if self.on_gesture_capture:
-                    self.on_gesture_capture()
+                # Create callback for PIN submission
+                def on_pin_submit(pin):
+                    self.current_pin = pin
+                    self._pin_received = True
+                
+                def on_pin_cancel():
+                    self._auth_failed("PIN entry cancelled")
+                
+                def on_pin_timeout():
+                    self._auth_failed("PIN entry timeout")
+                
+                # Show PIN overlay (non-blocking with threading)
+                import threading
+                
+                def show_overlay():
+                    overlay = PINEntryOverlay(
+                        timeout=self.config.pin_timeout,
+                        on_submit=on_pin_submit,
+                        on_cancel=on_pin_cancel,
+                        on_timeout=on_pin_timeout
+                    )
+                    result = overlay.show()
+                    
+                    # Signal that overlay is closed
+                    self._pin_overlay_closed = True
+                
+                # Start overlay in separate thread
+                overlay_thread = threading.Thread(target=show_overlay, daemon=True)
+                overlay_thread.start()
+                
+            except ImportError as e:
+                print(f"Warning: GUI not available ({e}), using callback fallback")
+                # Fall back to callback
+                if self.on_pin_required:
+                    pin = self.on_pin_required()
+                    if pin:
+                        self.current_pin = pin
+                        self._pin_received = True
+                else:
+                    print("Error: No PIN input method available")
+                    self._auth_failed("No PIN input method")
+        
+        # Check if PIN was received
+        if hasattr(self, '_pin_received') and self._pin_received:
+            print(f"PIN received: {'*' * len(self.current_pin)}")
+            self._set_state(SystemState.GESTURE_CAPTURE)
+            self.gesture_capture_start = time.time()
+            self.accumulated_gesture = []
+            
+            # Clean up flags
+            delattr(self, '_pin_overlay_shown')
+            delattr(self, '_pin_received')
+            
+            if self.on_gesture_capture:
+                self.on_gesture_capture()
     
     def _handle_gesture_capture(self) -> None:
-        """Handle gesture capture state"""
+        """Handle gesture capture state - accumulate gesture frames over time"""
+        # Check if we just entered this state
+        if not hasattr(self, 'gesture_capture_start'):
+            self.gesture_capture_start = time.time()
+            self.accumulated_gesture = []
+            print("Gesture capture started - perform your gesture now!")
+        
         # Check timeout
-        elapsed = time.time() - self.auth_start_time
+        elapsed = time.time() - self.gesture_capture_start
         if elapsed > self.config.gesture_capture_duration:
-            print(f"Gesture capture timeout ({self.config.gesture_capture_duration}s)")
-            self._auth_failed("Gesture capture timeout")
-            return
-        
-        # Capture gesture from camera
-        gesture = self.camera.get_current_gesture()
-        
-        if gesture is not None:
-            # Normalize gesture
-            normalized = normalize_signature(gesture)
-            self.current_gesture = normalized.tolist()
+            print(f"Gesture capture complete ({self.config.gesture_capture_duration}s)")
             
-            # Check if we have enough points
-            if len(self.current_gesture) >= self.config.gesture_min_points:
+            # Check if we captured enough points
+            if len(self.accumulated_gesture) >= self.config.gesture_min_points:
+                # Normalize the full gesture
+                gesture_array = np.array(self.accumulated_gesture)
+                normalized = normalize_signature(gesture_array)
+                self.current_gesture = normalized
+                
+                print(f"Captured {len(self.accumulated_gesture)} gesture points")
+                
+                # Move to authentication
                 self._set_state(SystemState.AUTHENTICATING)
                 self._perform_authentication()
             else:
-                print(f"Gesture too short: {len(self.current_gesture)} points")
+                self._auth_failed(f"Gesture too short: {len(self.accumulated_gesture)} points (need {self.config.gesture_min_points})")
+            
+            # Clean up
+            if hasattr(self, 'gesture_capture_start'):
+                delattr(self, 'gesture_capture_start')
+            return
+        
+        # Continue capturing frames
+        frame = self.camera.get_frame()
+        if frame is not None:
+            hands_data = self.camera.detect_hands(frame)
+            
+            if hands_data:
+                # Get the first hand's landmarks
+                landmarks = hands_data[0].landmarks
+                self.accumulated_gesture.append(landmarks)
+                
+                # Show progress
+                if len(self.accumulated_gesture) % 10 == 0:
+                    print(f"Capturing... {len(self.accumulated_gesture)} points ({elapsed:.1f}s)")
+            else:
+                # No hand detected - warn user
+                if len(self.accumulated_gesture) == 0 and elapsed > 1.0:
+                    print("Warning: No hand detected! Show your hand to the camera.")
+    
+    def _perform_authentication(self) -> None:
+        """Perform DTW authentication (called from gesture capture)"""
+        # This runs the actual authentication
+        # Called automatically after gesture capture completes
+        pass  # The actual work is done in _handle_authenticating
     
     def _handle_authenticating(self) -> None:
         """Handle authentication (DTW matching)"""
-        # Authentication is synchronous for now
-        # In production, this could be async
+        # Convert gesture to numpy array if needed
+        if isinstance(self.current_gesture, list):
+            gesture_array = np.array(self.current_gesture)
+        else:
+            gesture_array = self.current_gesture
         
-        gesture_array = np.array(self.current_gesture)
+        print(f"Authenticating with gesture ({len(gesture_array)} points)...")
         
         # Authenticate
         profile, status = self.authenticator.authenticate(
